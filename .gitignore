@@ -1,0 +1,27 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Рабочие данные программы при разработке (настройки, логи, временные файлы, модули)
+/data/
+*.log
+
+# pytest
+.pytest_cache/
+
+# Образцы RAW с raw.pixls.us (CC0) — большие, хранятся только локально
+tests/data/*.cr2
+tests/data/*.cr3
+
+# Карта кода graphify (пересобирается локально)
+graphify-out/
+
+# Локальные настройки Claude Code
+.claude/

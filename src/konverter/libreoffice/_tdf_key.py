@@ -1,0 +1,53 @@
+"""Открытый ключ подписи выпусков LibreOffice (The Document Foundation), зашит в код.
+
+Получен 24.10.2026 с https://keys.openpgp.org/vks/v1/by-fingerprint/C2839ECAD9408FBE9531C3E9F434A1EFAFEEAEA3
+(тот же основной ключ отдаёт keyserver.ubuntu.com). Отпечаток основного ключа сверяется
+кодом при каждой загрузке (`openpgp.load_keyring`): RSA 4096, создан 2010-10-11,
+"LibreOffice Build Team (CODE SIGNING KEY) <build@documentfoundation.org>".
+Им подписаны и основной msi, и helppack (проверено на 26.2.6 и 26.8.1:
+подпакет «отпечаток издателя» = основной ключ, не подключ). Подключ в блоке —
+для шифрования, к проверке подписей не допускается (нет флага «подпись»).
+"""
+
+TDF_FINGERPRINT = "C2839ECAD9408FBE9531C3E9F434A1EFAFEEAEA3"
+
+TDF_PUBLIC_KEY = """-----BEGIN PGP PUBLIC KEY BLOCK-----
+Comment: C283 9ECA D940 8FBE 9531  C3E9 F434 A1EF AFEE AEA3
+
+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
+=q5zq
+-----END PGP PUBLIC KEY BLOCK-----
+"""
