@@ -327,7 +327,13 @@ def _remove_orphan_dir(path: Path, depth: int = 0) -> bool:
 
 
 def _remove(temp: Path, own_dir: bool) -> bool:
-    """Удаляет временный объект. True — удалён (или его уже нет)."""
+    """Удаляет временный объект. True — удалён (или его уже нет).
+
+    Через расширенный путь (`paths.long_path`): внутри временной папки
+    (распакованный архив и т.п.) вложенные пути могут быть > 260 символов,
+    даже если сама папка лежит неглубоко.
+    """
+    temp = Path(paths.long_path(temp))
     try:
         st = os.lstat(temp)
     except FileNotFoundError:

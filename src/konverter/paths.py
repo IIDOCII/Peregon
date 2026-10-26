@@ -35,6 +35,36 @@ MODULES_DIR_NAME = "modules"
 # Файл-маркер корня проекта при разработке.
 _PROJECT_MARKER = "pyproject.toml"
 
+# Отдельная переменная (а не прямой `os.name`), чтобы тесты могли подменить.
+_IS_WINDOWS = os.name == "nt"
+
+_EXTENDED_PREFIX = "\\\\?\\"
+
+
+def long_path(path: Path | str) -> str:
+    """Путь для системных вызовов над деревьями, где пути бывают > 260 символов.
+
+    На Windows — абсолютный нормализованный путь с префиксом `\\\\?\\`
+    (для UNC — `\\\\?\\UNC\\сервер\\ресурс\\…`): с ним функции Win32 не
+    ограничены MAX_PATH, даже если в системе не включён LongPathsEnabled.
+    Префикс отключает разбор `..`, `.` и `/` — поэтому путь нормализуется
+    заранее (`os.path.abspath`). Уже расширенный путь (`\\\\?\\…`, `\\\\.\\…`)
+    возвращается как есть. Не на Windows — путь без изменений.
+
+    Нужен для деревьев, которые создаёт LibreOffice (профиль с вложенными
+    папками `…PackageRegistryBackend\\luXXXX.tmp\\…`): копирование, удаление
+    и обход таких деревьев обычными путями падают с [WinError 3].
+    """
+    text = os.fspath(path)
+    if not _IS_WINDOWS:
+        return text
+    if text.startswith((_EXTENDED_PREFIX, "\\\\.\\")):
+        return text
+    text = os.path.abspath(text)
+    if text.startswith("\\\\"):  # UNC: \\server\share → \\?\UNC\server\share
+        return _EXTENDED_PREFIX + "UNC\\" + text[2:]
+    return _EXTENDED_PREFIX + text
+
 
 def app_root() -> Path:
     """Возвращает корневую папку программы.

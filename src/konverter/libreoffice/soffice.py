@@ -24,6 +24,11 @@
   памяти `MEMORY_LIMIT`, запуск приостановленным; отмена (опрос каждые
   0,25 с) и таймаут `TIMEOUT` убивают всё дерево; после любой развязки
   процессов задачи не остаётся.
+* Длинные пути: в профиле LibreOffice есть глубокие папки
+  (`user/extensions/bundled/registry/…PackageRegistryBackend/luXXXX.tmp/…`,
+  ~150 символов от корня профиля), поэтому при длинном пути к программе
+  полный путь превышает MAX_PATH (260). Копирование и удаление таких деревьев
+  идут через расширенный путь `paths.long_path` (префикс `\\\\?\\`).
 """
 
 from __future__ import annotations
@@ -36,6 +41,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator
 from xml.sax.saxutils import escape, quoteattr
+
+from konverter import paths
 
 from . import jobobject
 
@@ -139,8 +146,57 @@ def write_profile(profile: Path) -> None:
     (user / "registrymodifications.xcu").write_text(registry_xcu(), encoding="utf-8")
 
 
+# Что не копируется из профиля в шаблон и из шаблона в папку работы
+# (имена в КОРНЕ профиля): LibreOffice пересоздаёт их сам при запуске.
+# * `cache` — кэш скомпилированных ядер OpenCL/формул (`*.bin`,
+#   `opencl_profile.xml`); при отсутствии строится заново.
+# * `crash` — `dump.ini` с параметрами отчёта о сбое; пишется заново при
+#   каждом запуске (отчёты о сбоях у нас выключены).
+# * `.lock` — блокировка профиля работавшего процесса (после его завершения
+#   обычно уже удалена; чужая блокировка новой копии не нужна).
+# НЕ пропускаются папки `luXXXX.tmp` в `user/extensions/…/registry/…`: несмотря
+# на имя, это данные зарегистрированных встроенных расширений (словари,
+# справка) — на них ссылаются `backenddb.xml` и `configmgr.ini`; без них
+# профиль несогласован. Длинные пути в них решаются расширенным путём.
+PROFILE_SKIP_ROOT = frozenset({"cache", "crash", ".lock"})
+
+
+def profile_ignore(root: Path | str) -> Callable[[str, list[str]], set[str]]:
+    """Фильтр `ignore` для копирования профиля: `PROFILE_SKIP_ROOT` только в корне."""
+    root_key = os.path.normcase(paths.long_path(root))
+
+    def ignore(directory: str, names: list[str]) -> set[str]:
+        if os.path.normcase(paths.long_path(directory)) != root_key:
+            return set()
+        return {name for name in names if name.lower() in PROFILE_SKIP_ROOT}
+
+    return ignore
+
+
+def copy_tree(src: Path, dst: Path, *, skip_profile_caches: bool = False) -> None:
+    """Копирует дерево (ссылки не раскрываются) через расширенные пути.
+
+    Ошибки — как у `shutil.copytree` (`shutil.Error` со списком файлов,
+    OSError); частичную копию убирает вызывающий.
+    """
+    ignore = profile_ignore(src) if skip_profile_caches else None
+    shutil.copytree(paths.long_path(src), paths.long_path(dst), symlinks=False, ignore=ignore)
+
+
+def error_summary(exc: BaseException) -> str:
+    """Короткое описание ошибки копирования (без списка всех файлов из shutil.Error)."""
+    if isinstance(exc, shutil.Error) and exc.args and isinstance(exc.args[0], list):
+        errors = exc.args[0]
+        first = errors[0][2] if errors and len(errors[0]) == 3 else "?"
+        return f"не скопировано объектов: {len(errors)}, первая ошибка: {first}"
+    return str(exc)
+
+
 def remove_tree(path: Path) -> None:
-    """Удаляет СВОЮ временную папку (ссылки не раскрываются); ошибки — в журнал."""
+    """Удаляет СВОЮ временную папку (ссылки не раскрываются); ошибки — в журнал.
+
+    Через расширенный путь: в профиле LibreOffice бывают пути > 260 символов.
+    """
 
     def on_error(func, target, exc) -> None:
         try:
@@ -150,7 +206,7 @@ def remove_tree(path: Path) -> None:
             log.warning("Не удалось удалить %s: %s", target, exc)
 
     try:
-        shutil.rmtree(path, onexc=on_error)
+        shutil.rmtree(paths.long_path(path), onexc=on_error)
     except FileNotFoundError:
         pass
     except OSError as exc:
@@ -207,7 +263,16 @@ def convert(
     in_dir.mkdir()
     out_dir.mkdir()
     if template is not None and template.is_dir():
-        shutil.copytree(template, profile, symlinks=False)
+        try:
+            copy_tree(template, profile, skip_profile_caches=True)
+        except (shutil.Error, OSError) as exc:
+            # Не беда: LibreOffice создаст профиль сам (только медленнее).
+            log.warning(
+                "Шаблон профиля LibreOffice не скопирован (%s): %s — запуск с новым профилем",
+                template, error_summary(exc),
+            )
+            log.debug("Подробности копирования шаблона: %r", exc)
+            remove_tree(profile)
     write_profile(profile)
     copy = in_dir / f"input.{ext}"
     shutil.copyfile(source, copy)

@@ -480,7 +480,7 @@ def _install(progress, cancelled, policy) -> str:
     except Exception as exc:
         _remove_file(msi_path)
         log.exception("Распаковка LibreOffice не удалась")
-        raise InstallError(tr("office_err_unpack").format(error=exc)) from exc
+        raise InstallError(tr("office_err_unpack").format(error=_error_text(exc))) from exc
     _remove_file(msi_path)
     try:
         download_dir.rmdir()  # только если пуста
@@ -567,9 +567,32 @@ def trial_conversion(
             if not fh.read(5).startswith(b"%PDF-"):
                 raise InstallError(tr("office_err_trial_output"))
         if keep_profile is not None:
-            import shutil
+            _keep_profile(work / "profile", keep_profile)
 
-            shutil.copytree(work / "profile", keep_profile, symlinks=False)
+
+def _keep_profile(profile: Path, keep_profile: Path) -> None:
+    """Сохраняет профиль как шаблон (через расширенные пути, без кэшей).
+
+    Ошибка → InstallError с понятным текстом; список файлов из `shutil.Error`
+    — только в журнал; частичная копия удаляется.
+    """
+    import shutil
+
+    try:
+        soffice.copy_tree(profile, keep_profile, skip_profile_caches=True)
+    except (shutil.Error, OSError) as exc:
+        log.warning("Не удалось сохранить профиль-шаблон LibreOffice в %s: %s",
+                    keep_profile, soffice.error_summary(exc))
+        log.debug("Подробности копирования профиля: %r", exc)
+        soffice.remove_tree(keep_profile)
+        raise InstallError(tr("office_err_profile_copy")) from exc
+
+
+def _error_text(exc: BaseException) -> str:
+    """Текст непредвиденной ошибки для сообщения (без списка кортежей shutil.Error)."""
+    if isinstance(exc, OSError) and exc.strerror:
+        return exc.strerror
+    return soffice.error_summary(exc)
 
 
 def _unpack_and_check(
