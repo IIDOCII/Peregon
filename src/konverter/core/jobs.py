@@ -55,6 +55,7 @@ import logging
 import math
 import os
 import queue
+import re
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -488,6 +489,8 @@ class JobManager:
                 job.cancel_token.raise_if_cancelled()
                 raise _RunnerDone()
             try:
+                # Расширение временного файла — лишь метка: если настоящее другое,
+                # его вернёт конвертер, и `finalize` даст результату верное имя.
                 if job.target.extension:
                     temp = naming.make_temp_file(job.output_dir, job.target.extension)
                 else:
@@ -499,7 +502,7 @@ class JobManager:
             with self._lock:
                 self._temps[job.id] = temp
 
-            job.converter.convert(
+            extension = job.converter.convert(
                 list(job.sources), temp, job.target, job.preset, progress, job.cancel_token,
                 formats=list(job.formats), **job.options,
             )
@@ -507,9 +510,11 @@ class JobManager:
             job.cancel_token.raise_if_cancelled()
 
             try:
-                result = naming.finalize(
-                    temp, job.output_dir, job.output_stem, job.target.extension
-                )
+                # Конвертер может вернуть настоящее расширение (зависит от входа,
+                # например «Для печати» у изображений); иначе — из варианта.
+                if not (isinstance(extension, str) and re.fullmatch(r"[a-z0-9]{1,5}", extension)):
+                    extension = job.target.extension
+                result = naming.finalize(temp, job.output_dir, job.output_stem, extension)
             except OSError as exc:
                 raise ConversionError(
                     tr("err_write_result").format(error=exc.strerror or exc)

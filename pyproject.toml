@@ -1,6 +1,6 @@
 [project]
 name = "konverter"
-version = "0.1.1"
+version = "0.1.2"
 description = "Локальный конвертер файлов для Windows"
 readme = "README.md"
 license = "GPL-3.0-or-later"

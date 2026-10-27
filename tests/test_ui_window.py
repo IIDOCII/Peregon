@@ -405,7 +405,7 @@ def test_target_combo_order_and_labels_for_mixed_group(qtbot, make_window, files
     combo = win.group_panels[0].target_combo
     ids = [combo.itemData(i) for i in range(combo.count())]
     assert ids == ["jpg", "png", "webp", "avif", "gif", "bmp", "tiff", "ico",
-                   "pdf_each", "pdf_single"]
+                   "pdf_each", "pdf_single", "print_ppi"]
     assert [combo.itemText(i) for i in range(combo.count())] == [
         tr(f"target_{tid}") for tid in ids
     ]

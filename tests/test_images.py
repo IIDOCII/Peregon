@@ -142,8 +142,8 @@ def test_registered():
 def test_targets_basic():
     ids = [t.id for t in CONV.targets("jpg")]
     assert "jpg" not in ids
-    assert ids == ["png", "webp", "avif", "gif", "bmp", "tiff", "ico", "pdf_each", "pdf_single"]
-    assert len(CONV.targets("svg")) == 10
+    assert ids == ["png", "webp", "avif", "gif", "bmp", "tiff", "ico", "pdf_each", "pdf_single", "print_ppi"]
+    assert len(CONV.targets("svg")) == 11
     assert "heic" not in [t.id for t in CONV.targets("heic")]
     assert CONV.targets("mp4") == []
 
@@ -176,7 +176,7 @@ def test_target_labels_from_strings(monkeypatch):
 def test_target_order_constant():
     """Полный канонический порядок вариантов; targets() его соблюдает."""
     assert list(ImageConverter.target_order) == [
-        "jpg", "png", "webp", "avif", "gif", "bmp", "tiff", "ico", "pdf_each", "pdf_single",
+        "jpg", "png", "webp", "avif", "gif", "bmp", "tiff", "ico", "pdf_each", "pdf_single", "print_ppi",
     ]
     for fmt in images.INPUT_FORMATS:
         ids = [t.id for t in CONV.targets(fmt)]
@@ -186,7 +186,7 @@ def test_target_order_constant():
 # --- Матрица: каждый вход × каждый выход -------------------------------------
 
 _MATRIX_INPUTS = ["jpg", "png", "webp", "heic", "avif", "gif", "bmp", "tiff", "ico", "svg"]
-_MATRIX = [(fmt, t.id) for fmt in _MATRIX_INPUTS for t in CONV.targets(fmt)]
+_MATRIX = [(fmt, t.id) for fmt in _MATRIX_INPUTS for t in CONV.targets(fmt) if t.id != "print_ppi"]
 
 
 @pytest.mark.parametrize(("fmt", "target_id"), _MATRIX)

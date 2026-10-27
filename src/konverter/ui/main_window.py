@@ -42,6 +42,11 @@
 видео группы ставятся с фрагментом 0..N без новых окон. Уже идущие задачи
 окно не останавливает.
 
+Изображения → «Для печати (PPI)»: так же по очереди окно «Подготовить к
+печати» (`print_ppi.py`); PPI и сантиметры уходят в задачу
+(`options={"print_ppi": (ppi, см)}`), «Применить ко всем» — остальные
+картинки группы с теми же значениями без окон.
+
 Окно растёт по высоте вместе с содержимым (до доли экрана, дальше —
 прокрутка); если оно в нижней половине экрана, растёт вверх, чтобы
 не уходить за край. Позиция запоминается в настройках (Ф1).
@@ -114,6 +119,8 @@ from konverter.ui.gif_fragment import CANCEL as GIF_CANCEL
 from konverter.ui.gif_fragment import GifChoice, GifFragmentDialog
 from konverter.ui.group_panel import NOTICE_INFO, NOTICE_WARNING, GroupPanel, NoticePanel
 from konverter.ui.job_list import JobList, JobRow, reveal_in_explorer
+from konverter.ui.print_ppi import CANCEL as PRINT_CANCEL
+from konverter.ui.print_ppi import PrintChoice, PrintPpiDialog
 
 log = logging.getLogger(__name__)
 
@@ -806,8 +813,26 @@ class MainWindow(QWidget):
         gif_mode = target.id == "gif" and group.category == Category.VIDEO
         apply_all: float | None = None
         skipped_gif = 0
+        # Изображения → «Для печати (PPI)»: окно по очереди, «Применить ко всем».
+        print_mode = target.id == "print_ppi" and group.category == Category.IMAGE
+        apply_print: tuple[int, float] | None = None
+        skipped_print = 0
         for index, (sources, formats, folder, stem) in enumerate(plan):
             options: dict[str, Any] = {}
+            if print_mode:
+                if apply_print is None:
+                    choice = self._ask_print_ppi(sources[0], formats[0], index + 1, len(plan))
+                    if self._closing.is_set():
+                        break
+                    if choice.kind not in ("one", "all"):
+                        skipped_print += 1
+                        self._user_cancelled = True
+                        continue
+                    if choice.kind == "all":
+                        apply_print = (choice.ppi, choice.cm)
+                    options["print_ppi"] = (choice.ppi, choice.cm)
+                else:
+                    options["print_ppi"] = apply_print
             if gif_mode:
                 if apply_all is None:
                     choice = self._ask_gif_fragment(sources[0], formats[0], index + 1, len(plan))
@@ -837,10 +862,26 @@ class MainWindow(QWidget):
             self.add_notice(
                 tr("gif_skipped").format(count=files_count(skipped_gif)), kind=NOTICE_INFO
             )
+        if skipped_print and not self._closing.is_set():
+            self.add_notice(
+                tr("print_skipped").format(count=files_count(skipped_print)), kind=NOTICE_INFO
+            )
         if created:
             # Группа ушла в работу — её место занимают строки задач.
             self.remove_group(panel)
         return created
+
+    def _ask_print_ppi(self, source: Path, fmt: str, index: int, total: int) -> PrintChoice:
+        """Модальное окно «Подготовить к печати» для одной картинки."""
+        dialog = PrintPpiDialog(source, fmt, index=index, total=total, parent=self)
+        try:
+            dialog.exec()
+            return dialog.choice or PRINT_CANCEL
+        except Exception:  # noqa: BLE001 — граница с окном: сбой = отмена этой картинки
+            log.exception("Сбой окна «Подготовить к печати»")
+            return PRINT_CANCEL
+        finally:
+            dialog.deleteLater()
 
     def _ask_gif_fragment(self, source: Path, fmt: str, index: int, total: int) -> GifChoice:
         """Модальное окно «Фрагмент для GIF» (Ф20) для одного видео.

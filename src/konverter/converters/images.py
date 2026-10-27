@@ -26,6 +26,15 @@
   (в GIF n — число ПОВТОРОВ, в WEBP — число проигрываний).
 * Многостраничный TIFF в PDF попадает целиком (страница на страницу),
   в остальные форматы — первая страница.
+* «Для печати (PPI)» (`print_ppi`): окно спрашивает PPI и длинную сторону в см,
+  параметры приходят в `convert(print_ppi=(ppi, см))`. Длинная сторона в px =
+  round(см / 2,54 × PPI), вторая — по пропорциям, ресемплинг LANCZOS; PPI
+  пишется в файл, ICC-профиль сохраняется (цвета НЕ переводятся в sRGB).
+  JPG/PNG/TIFF/BMP остаются в своём формате (JPG: качество 95, 4:4:4), прочие
+  входы → JPG, а с реально используемой прозрачностью → PNG. Расширение
+  результата зависит от входа, поэтому `convert` для этого варианта
+  возвращает его строкой (`core.jobs` берёт его вместо `Target.extension`).
+  Анимация — только первый кадр.
 * ICO: квадрат 256×256 с прозрачными полями, исходник вписывается
   с сохранением пропорций (маленькие картинки увеличиваются), в файл
   пишутся размеры 16, 24, 32, 48, 64, 128, 256.
@@ -232,6 +241,12 @@ _OUTPUTS = [
 ]
 TARGET_PDF_EACH = "pdf_each"
 TARGET_PDF_SINGLE = "pdf_single"
+TARGET_PRINT = "print_ppi"
+# Печать: пределы PPI и длинной стороны результата, px.
+PPI_MIN, PPI_MAX = 1, 2400
+PRINT_MAX_SIDE = 65_000
+# Форматы, которые при подготовке к печати остаются своими (код → расширение).
+_PRINT_SAME = {"jpg": "jpg", "png": "png", "tiff": "tiff", "bmp": "bmp"}
 
 # Полный канонический порядок вариантов (для смешанных групп его соблюдает
 # core.grouping.common_targets: «JPG» не уезжает в конец списка).
@@ -239,6 +254,7 @@ TARGET_ORDER: tuple[str, ...] = (
     *(tid for tid, _ext, _uses in _OUTPUTS),
     TARGET_PDF_EACH,
     TARGET_PDF_SINGLE,
+    TARGET_PRINT,
 )
 
 
@@ -330,10 +346,12 @@ def _high_bit_to_l(img: Image.Image) -> Image.Image:
     return Image.fromarray(out, "L")
 
 
-def _normalize(img: Image.Image) -> Image.Image:
+def _normalize(img: Image.Image, keep_icc: bool = False) -> Image.Image:
     """Приводит кадр к режиму L, RGB или RGBA в sRGB и очищает метаданные.
 
     Возвращает НОВОЕ изображение (не связанное с файлом) с пустым `info`.
+    `keep_icc` — не переводить цвета в sRGB, а оставить профиль в `info`
+    (для L/RGB/RGBA; CMYK и 16-бит всё равно приводятся к sRGB/L без профиля).
     """
     icc = img.info.get("icc_profile")
     mode = img.mode
@@ -347,20 +365,23 @@ def _normalize(img: Image.Image) -> Image.Image:
         out = img.convert("RGBA")
     elif mode in ("1", "L"):
         out = img.convert("L")
-        icc = None  # серые профили не трогаем
+        icc = icc if keep_icc else None  # серые профили не трогаем
     else:
         out = img.convert("RGB")
-    if icc and out.mode in ("RGB", "RGBA"):
+    if icc and not keep_icc and out.mode in ("RGB", "RGBA"):
         out = _icc_to_srgb(out, icc, out.mode) or out
     if out is img:
         out = img.copy()
-    out.info = {}
+    # Профиль другого цветового пространства (серый для LA→RGBA и т.п.) не годится.
+    if icc and keep_icc and icc[16:20] != (b"GRAY" if out.mode == "L" else b"RGB "):
+        icc = None
+    out.info = {"icc_profile": icc} if keep_icc and icc else {}
     return out
 
 
-def _prepare_frame(img: Image.Image) -> Image.Image:
+def _prepare_frame(img: Image.Image, keep_icc: bool = False) -> Image.Image:
     """Текущий кадр/страница: EXIF-поворот + нормализация режима."""
-    return _normalize(ImageOps.exif_transpose(img))
+    return _normalize(ImageOps.exif_transpose(img), keep_icc)
 
 
 def _flatten(img: Image.Image) -> Image.Image:
@@ -904,7 +925,7 @@ class _Source:
     def is_multipage_tiff(self) -> bool:
         return self.pil_format == "TIFF" and self._frame_count() > 1
 
-    def first(self) -> Image.Image:
+    def first(self, keep_icc: bool = False) -> Image.Image:
         """Первый кадр/страница, уже повёрнутый и нормализованный."""
         if self._ready is not None:
             return self._ready
@@ -914,7 +935,7 @@ class _Source:
             # Резервация — до load(), живёт до закрытия источника (и сохранения).
             _reserve(self._stack, self._pil.size[0] * self._pil.size[1], self._cancel)
             self._pil.load()
-            return _prepare_frame(self._pil)
+            return _prepare_frame(self._pil, keep_icc)
 
     def pages(self, cancel: CancelToken) -> Iterator[Image.Image]:
         """Все страницы многостраничного TIFF (или единственное изображение).
@@ -1030,6 +1051,72 @@ def _save_raster(img: Image.Image, dst: Path, target_id: str, preset: Preset) ->
             _ico_canvas(img).save(dst, "ICO", sizes=_ICO_SIZES)
         else:
             raise ConversionError(f"Неизвестный вариант конвертации: {target_id}")
+
+
+def print_pixels(width: int, height: int, cm: float, ppi: int) -> tuple[int, int]:
+    """Размер в px при длинной стороне `cm` и `ppi`; вторая сторона — по пропорциям."""
+    long_px = max(1, round(cm / 2.54 * ppi))
+    if width >= height:
+        return long_px, max(1, round(height * long_px / width))
+    return max(1, round(width * long_px / height)), long_px
+
+
+def check_print(ppi, cm, size: tuple[int, int] | None = None) -> None:
+    """Проверяет параметры печати (`size` — размер картинки, если известен)."""
+    if not isinstance(ppi, int) or not PPI_MIN <= ppi <= PPI_MAX:
+        raise ConversionError(tr("print_err_ppi").format(min=PPI_MIN, max=PPI_MAX))
+    if not isinstance(cm, (int, float)) or not math.isfinite(cm) or cm <= 0:
+        raise ConversionError(tr("print_err_cm"))
+    if cm * ppi / 2.54 > PRINT_MAX_SIDE:  # до round: огромные числа дают inf
+        raise ConversionError(tr("print_err_side").format(max=PRINT_MAX_SIDE))
+    if size is not None:
+        width, height = print_pixels(*size, cm, ppi)
+        if max(width, height) > PRINT_MAX_SIDE:
+            raise ConversionError(tr("print_err_side").format(max=PRINT_MAX_SIDE))
+        if width * height > MAX_PIXELS:
+            raise ConversionError(tr("print_err_pixels").format(
+                pixels=width * height // 1_000_000, max=MAX_PIXELS // 1_000_000))
+
+
+def peek_size(path: Path, fmt: str) -> tuple[int, int, float | None] | None:
+    """Размер после EXIF-поворота и PPI из файла — только по заголовку, без
+    декодирования. None — неизвестно (SVG, RAW, ошибка чтения)."""
+    codes = _PIL_FORMATS_BY_CODE.get((fmt or "").lower())
+    if not codes:
+        return None
+    try:
+        _ensure_heif()
+        with Image.open(path, formats=codes) as img:
+            width, height = img.size
+            if img.getexif().get(0x0112, 1) in (5, 6, 7, 8):
+                width, height = height, width
+            dpi = img.info.get("dpi")
+            ppi = float(dpi[0]) if dpi and math.isfinite(float(dpi[0])) and dpi[0] > 0 else None
+    except Exception:  # noqa: BLE001 — заголовок не разобран: размер просто неизвестен
+        return None
+    return (width, height, ppi) if width > 0 and height > 0 else None
+
+
+def _save_print(img: Image.Image, dst: Path, fmt: str, ppi: int) -> str:
+    """Сохраняет для печати (см. докстринг модуля); возвращает расширение результата."""
+    icc = img.info.get("icc_profile")
+    ext = _PRINT_SAME.get(fmt)
+    if ext is None:
+        alpha = img.mode == "RGBA" and img.getchannel("A").getextrema()[0] < 255
+        ext = "png" if alpha else "jpg"
+    dpi = (ppi, ppi)
+    with _encoding():
+        if ext == "jpg":
+            _flatten(img).save(
+                dst, "JPEG", quality=95, subsampling=0, optimize=True, dpi=dpi, icc_profile=icc
+            )
+        elif ext == "png":
+            img.save(dst, "PNG", compress_level=6, dpi=dpi, icc_profile=icc)
+        elif ext == "tiff":
+            img.save(dst, "TIFF", compression="tiff_lzw", dpi=dpi, icc_profile=icc)
+        else:
+            img.save(dst, "BMP", dpi=dpi)
+    return ext
 
 
 def _ico_canvas(img: Image.Image) -> Image.Image:
@@ -1157,6 +1244,13 @@ class ImageConverter:
                 is_long=True,
             )
         )
+        # Расширение результата зависит от входа: реальное возвращает convert().
+        result.append(
+            Target(
+                id=TARGET_PRINT, label=_target_label(TARGET_PRINT), extension="jpg",
+                uses_preset=False, is_long=is_raw,
+            )
+        )
         return result
 
     def convert(
@@ -1169,7 +1263,9 @@ class ImageConverter:
         cancel: CancelToken,
         *,
         formats: list[str],
-    ) -> None:
+        print_ppi: tuple[int, float] | None = None,
+    ) -> str | None:
+        """Для `print_ppi` возвращает расширение результата, для прочих — None."""
         cancel.raise_if_cancelled()
         if not sources:
             raise ConversionError("Нет файлов для конвертации")
@@ -1178,17 +1274,41 @@ class ImageConverter:
         if len(formats) != len(sources):
             raise ConversionError("Внутренняя ошибка: не переданы форматы исходных файлов")
         dst = Path(dst)
+        extension = None
         if target.id == TARGET_PDF_SINGLE:
             self._to_single_pdf(sources, formats, dst, preset, progress, cancel)
         elif len(sources) != 1:
             raise ConversionError("Этот вариант обрабатывает один файл за раз")
+        elif target.id == TARGET_PRINT:
+            if print_ppi is None:
+                raise ConversionError(tr("print_err_no_params"))
+            extension = self._to_print(sources[0], formats[0], dst, *print_ppi, cancel)
         elif target.id == TARGET_PDF_EACH:
             self._to_pdf(sources[0], formats[0], dst, preset, progress, cancel)
         else:
             self._to_raster(sources[0], formats[0], dst, target.id, preset, progress, cancel)
         progress(1.0)
+        return extension
 
     # -- варианты --
+
+    def _to_print(
+        self, src: Path, fmt: str, dst: Path, ppi: int, cm: float, cancel: CancelToken
+    ) -> str:
+        check_print(ppi, cm)
+        with ExitStack() as stack:
+            source = _Source(src, fmt, stack, half_size_raw=False, cancel=cancel)
+            image = source.first(keep_icc=True)
+            check_print(ppi, cm, image.size)
+            size = print_pixels(*image.size, cm, ppi)
+            if size != image.size:
+                _reserve(stack, size[0] * size[1], cancel)
+                icc = image.info.get("icc_profile")
+                with _encoding():
+                    image = image.resize(size, Image.Resampling.LANCZOS)
+                image.info["icc_profile"] = icc  # resize не переносит info
+            cancel.raise_if_cancelled()
+            return _save_print(image, dst, fmt, ppi)
 
     def _to_raster(
         self,

@@ -134,7 +134,7 @@ def test_mixed_jpg_png_offers_both(tmp_path):
 
 
 _IMAGE_ORDER = [
-    "jpg", "png", "webp", "avif", "gif", "bmp", "tiff", "ico", "pdf_each", "pdf_single",
+    "jpg", "png", "webp", "avif", "gif", "bmp", "tiff", "ico", "pdf_each", "pdf_single", "print_ppi",
 ]
 
 

@@ -53,6 +53,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "target_ico": "ICO (значок)",
         "target_pdf_each": "PDF (отдельный файл на каждое изображение)",
         "target_pdf_single": "PDF (все изображения в один файл)",
+        "target_print_ppi": "Для печати (PPI)…",
         # --- Варианты конвертации видео и аудио (converters/media.py) ---
         # «target_gif» общий с изображениями (выше).
         "target_mp4": "MP4",
@@ -315,6 +316,32 @@ STRINGS: dict[str, dict[str, str]] = {
             "(видео короче — целиком), без новых окон"
         ),
         "gif_skipped": "GIF не сделан (отменено в окне фрагмента): {count}",
+        # --- Подготовка к печати (converters/images.py, ui/print_ppi.py) ---
+        "print_err_ppi": "PPI — целое число от {min} до {max}",
+        "print_err_cm": "Размер в сантиметрах — число больше нуля",
+        "print_err_side": "Длинная сторона результата больше {max} px — уменьшите размер или PPI",
+        "print_err_pixels": "Результат слишком большой: {pixels} Мп, максимум {max} Мп",
+        "print_err_no_params": "Не заданы PPI и размер печати",
+        "print_dialog_title": "Подготовить к печати",
+        "print_dialog_title_n": "Подготовить к печати — картинка {index} из {total}",
+        "print_ppi": "PPI:",
+        "print_ppi_tip": "Плотность пикселей: 300 — обычная печать, 150 — плакаты, 72–96 — экран",
+        "print_cm": "Длинная сторона, см:",
+        "print_cm_tip": "Размер печати по длинной стороне; вторая сторона — по пропорциям картинки",
+        "print_as_is": "Как сейчас",
+        "print_as_is_tip": "Подставить текущий физический размер картинки (без PPI в файле — по 96)",
+        "print_current": "Сейчас: {width}×{height} px, {ppi} PPI",
+        "print_current_no_ppi": "Сейчас: {width}×{height} px, PPI в файле нет",
+        "print_unknown_size": "Размер картинки неизвестен — он будет определён при подготовке",
+        "print_result": "Получится: {width}×{height} px; вторая сторона — {other} см",
+        "print_upscale": "Картинка увеличится в {factor} раз — качество от этого не вырастет",
+        "print_make": "&Сделать",
+        "print_apply_all": "Применить ко всем: эти PPI и размер",
+        "print_apply_all_tip": (
+            "Подготовить этот и все остальные файлы группы с теми же PPI и длинной "
+            "стороной в сантиметрах, без новых окон"
+        ),
+        "print_skipped": "Не подготовлено к печати (отменено в окне): {count}",
     },
 }
 
